@@ -22,7 +22,7 @@ Then in the Claude Code session:
 
 | Path | What it does |
 |---|---|
-| `.claude/skills/defi-monitor/SKILL.md` | The skill prompt — dispatches on `sync` / `digest` / `replay` |
+| `.claude/skills/defi-monitor/SKILL.md` | The skill prompt - dispatches on `sync` / `digest` / `replay` |
 | `scripts/sync.py` | Incremental Telegram fetch, partitions messages by UTC+7 day, appends to per-day logs |
 | `logs/YYYY-MM-DD.md` | One file per day: raw messages on the bottom, prose digest on top |
 | `.sync-state.json` | Checkpoint of the last synced message ID (gitignored) |
@@ -31,11 +31,20 @@ Then in the Claude Code session:
 
 ## 🔑 Prerequisites
 
-- **`telegram` CLI authenticated** — `/opt/homebrew/bin/telegram` v0.9+ (run `telegram chats` to verify your session is live)
-- **Python 3.9+** on `python3` — used only for the sync script (no third-party deps)
-- **Claude Code** — the skill runs inside a Claude Code session
+- **`telegram` CLI v0.9+ authenticated** - `telegram chats` should succeed. Installed via Homebrew on macOS or via `npm -g telegram` / equivalent on Linux. The sync script finds it via `TELEGRAM_BIN` env var or `PATH`, so no path is hardcoded.
+- **Python 3.9+** on `python3` - stdlib only, no third-party deps
+- **Claude Code** - the skill runs inside a Claude Code session
+
+## 🖥️ Portable across hosts
+
+This repo is designed to run on any Unix-ish machine with the prerequisites above:
+
+- **Local (macOS)**: normal everyday use via `claude` in the repo
+- **Linux server (e.g. Hetzner)**: same commands work. Authenticate the `telegram` CLI once on the server, then run `python3 scripts/sync.py` directly from cron, a systemd timer, or a `loop` remote agent. Logs live in `logs/` (git-tracked), so `git pull` carries the archive between hosts. The sync checkpoint `.sync-state.json` is gitignored; scp it manually if you want the new host to resume from the same message ID instead of re-fetching the last 7 days via the bootstrap default.
+
+Nothing in the code hardcodes a machine-specific path. If you need to override the telegram binary location (unusual installs), set `TELEGRAM_BIN=/abs/path/to/telegram`.
 
 ## 📖 See also
 
-- [`PLAN.md`](./PLAN.md) — full design rationale
-- [`CLAUDE.md`](./CLAUDE.md) — project conventions (timezone, log format)
+- [`PLAN.md`](./PLAN.md) - full design rationale
+- [`CLAUDE.md`](./CLAUDE.md) - project conventions (timezone, log format)
