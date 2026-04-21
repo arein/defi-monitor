@@ -27,7 +27,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
+import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -43,17 +45,55 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 LOGS_DIR = REPO_ROOT / "logs"
 STATE_FILE = REPO_ROOT / ".sync-state.json"
 
-TELEGRAM_BIN = "/opt/homebrew/bin/telegram"
 CHAT_NAME = "ETHSecurity Community"
 
-# UTC+7 — Derek's local day boundary
+
+def resolve_telegram_bin() -> str:
+    """Find the telegram CLI without assuming a host (macOS vs Linux).
+
+    Resolution order:
+      1. TELEGRAM_BIN env var (absolute path override)
+      2. `telegram` on PATH (works for Homebrew on macOS and standard
+         Linux installs - apt, npm -g, /usr/local/bin, etc.)
+
+    Exits with a clear error if neither is set. The telegram CLI also
+    needs an authenticated session on whichever host runs this script -
+    that's a one-time `telegram login` or equivalent, out of scope here.
+    """
+    env_bin = os.environ.get("TELEGRAM_BIN")
+    if env_bin:
+        if not Path(env_bin).exists():
+            print(
+                f"✗ TELEGRAM_BIN is set to {env_bin!r} but that file does not exist",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        return env_bin
+    found = shutil.which("telegram")
+    if found:
+        return found
+    print(
+        "✗ telegram CLI not found. Install it, or set TELEGRAM_BIN=<absolute path>.",
+        file=sys.stderr,
+    )
+    print(
+        "  Hints: macOS Homebrew → /opt/homebrew/bin/telegram",
+        file=sys.stderr,
+    )
+    print(
+        "         Linux (npm -g) → /usr/local/bin/telegram or ~/.npm-global/bin/telegram",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+
+# UTC+7 - Derek's local day boundary
 LOCAL_TZ = timezone(timedelta(hours=7))
 
 DEFAULT_FIRSTRUN_SINCE = "7d"
 DEFAULT_INCREMENTAL_SINCE = "2d"  # overlap window, dedup handles duplicates
 DEFAULT_LIMIT = 5000
 
-# Block markers — must match SKILL.md and CLAUDE.md exactly
+# Block markers - must match SKILL.md and CLAUDE.md exactly
 DIGEST_START = "<!-- digest:start -->"
 DIGEST_END = "<!-- digest:end -->"
 RAW_START = "<!-- raw:start -->"
@@ -103,8 +143,9 @@ class Message:
 
 def fetch_messages(since: str, limit: int) -> list[Message]:
     """Invoke the telegram CLI and return parsed messages, newest-first as given."""
+    telegram_bin = resolve_telegram_bin()
     cmd = [
-        TELEGRAM_BIN,
+        telegram_bin,
         "read",
         CHAT_NAME,
         "--since",
@@ -172,7 +213,7 @@ def _parse_message(raw: dict) -> Message | None:
 
 
 def _parse_iso8601(s: str) -> datetime:
-    # gramJS writes "2026-04-20T19:34:22.000Z" — make it Python-parseable
+    # gramJS writes "2026-04-20T19:34:22.000Z" - make it Python-parseable
     if s.endswith("Z"):
         s = s[:-1] + "+00:00"
     return datetime.fromisoformat(s)
@@ -363,7 +404,7 @@ def main() -> int:
         print(f"  {date_str}: +{added} new message(s)", file=sys.stderr)
 
     write_state(high_water, synced_at)
-    print(f"› sync complete — last_msg_id={high_water}", file=sys.stderr)
+    print(f"› sync complete - last_msg_id={high_water}", file=sys.stderr)
 
     # machine-readable summary on stdout for the skill
     print(
