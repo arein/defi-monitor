@@ -1,0 +1,19 @@
+# sync checkpoint state — machine-local, recreated on every run
+.sync-state.json
+
+# macOS
+.DS_Store
+
+# editor
+.idea
+.vscode/settings.json
+
+# python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# env
+.env
+.env.local
