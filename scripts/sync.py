@@ -19,9 +19,14 @@ Flow:
 Stdlib only. Python 3.9+.
 
 Usage:
-    python3 scripts/sync.py              # normal incremental sync
-    python3 scripts/sync.py --since 30d  # override fetch window (bootstrap wider history)
-    python3 scripts/sync.py --limit 5000 # override --n passed to telegram read
+    python3 scripts/sync.py                   # normal incremental sync
+    python3 scripts/sync.py --since 30d       # override fetch window (bootstrap wider history)
+    python3 scripts/sync.py --limit 5000      # override -n passed to telegram read
+    python3 scripts/sync.py --days 50 --backfill
+        # deep backfill: pulls 50 days of history, bypasses the lastMessageId
+        # watermark (per-day file dedup still protects against duplicates).
+        # Use for first-run history bootstrap, e.g. to capture the Kelp DAO
+        # exploit from 50 days back.
 """
 from __future__ import annotations
 
@@ -101,7 +106,24 @@ RAW_END = "<!-- raw:end -->"
 
 ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 LOG_LINE_RE = re.compile(r"^\[\d{4}-\d{2}-\d{2}T.*\]")
-MSG_ID_RE = re.compile(r"<!-- id=(\d+) -->")
+# Anchored so injected `<!-- id=N -->` inside a message body can't forge
+# dedup entries (the trailing one written by render_bullet always lands at
+# end-of-line).
+MSG_ID_RE = re.compile(r"<!-- id=(\d+) -->\s*$", re.MULTILINE)
+
+
+def _sanitize_message_text(text: str) -> str:
+    """Neutralize HTML-comment delimiters embedded in Telegram message text.
+
+    Without this, a hostile channel member posting a message whose body
+    contains the literal `<!-- raw:end -->` would truncate our raw block on
+    the next parse, or `<!-- id=12345 -->` would forge a dedup entry that
+    silently drops the real message 12345 on a future sync. We insert a
+    zero-width space inside each `<!--` and `-->` - markdown renders
+    identically in every viewer we care about, but the marker / id-comment
+    regexes no longer match.
+    """
+    return text.replace("<!--", "<!​--").replace("-->", "--​>")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -128,7 +150,7 @@ class Message:
     def render_bullet(self) -> str:
         sender = self.sender.strip() or "unknown"
         if self.text:
-            body = self.text.replace("\n", "  \n    ")  # markdown soft-break + indent
+            body = _sanitize_message_text(self.text).replace("\n", "  \n    ")
             bullet = f"- **{self.local_time_hms}** `{sender}`: {body}"
         else:
             media = self.media_type or "media"
@@ -363,10 +385,24 @@ def main() -> int:
         help="Override the --since window (e.g. '7d', '30d'). Default: 7d on first run, 2d incremental.",
     )
     ap.add_argument(
+        "--days",
+        type=int,
+        help="Shorthand for --since <N>d. If combined with --since, --since wins.",
+    )
+    ap.add_argument(
         "--limit",
         type=int,
-        default=DEFAULT_LIMIT,
-        help=f"Max messages to fetch per run (default {DEFAULT_LIMIT})",
+        default=None,
+        help=f"Max messages to fetch per run (default {DEFAULT_LIMIT}, auto-scales in --backfill mode).",
+    )
+    ap.add_argument(
+        "--backfill",
+        action="store_true",
+        help=(
+            "Backfill mode: bypass the lastMessageId watermark so messages older "
+            "than the last sync are fetched and written. Per-day file dedup still "
+            "prevents duplicates. Use with --days N for a deep history bootstrap."
+        ),
     )
     args = ap.parse_args()
 
@@ -374,23 +410,45 @@ def main() -> int:
     last_known_id = int(state.get("lastMessageId") or 0)
     first_run = last_known_id == 0
 
-    since = args.since or (DEFAULT_FIRSTRUN_SINCE if first_run else DEFAULT_INCREMENTAL_SINCE)
+    if args.since:
+        since = args.since
+    elif args.days:
+        since = f"{args.days}d"
+    else:
+        since = DEFAULT_FIRSTRUN_SINCE if first_run else DEFAULT_INCREMENTAL_SINCE
+
+    if args.limit is not None:
+        limit = args.limit
+    elif args.backfill and args.days:
+        # Scale the fetch cap with the lookback. ETHSecurity Community
+        # typically runs 100-300 msgs/day, 300 gives generous headroom.
+        limit = max(DEFAULT_LIMIT, args.days * 300)
+    else:
+        limit = DEFAULT_LIMIT
+
+    mode = "backfill" if args.backfill else ("first run" if first_run else f"resuming from id={last_known_id}")
     print(
-        f"› sync starting ({'first run' if first_run else f'resuming from id={last_known_id}'})",
-        f"window={since} limit={args.limit}",
+        f"› sync starting ({mode}) window={since} limit={limit}",
         file=sys.stderr,
     )
 
-    messages = fetch_messages(since=since, limit=args.limit)
+    messages = fetch_messages(since=since, limit=limit)
     print(f"  fetched {len(messages)} messages from Telegram", file=sys.stderr)
 
-    # Filter to unseen (strict >), since telegram read can overlap the last run
-    fresh = [m for m in messages if m.id > last_known_id]
+    # In backfill mode, keep everything the CLI returned; per-day file dedup
+    # handles duplicates and we deliberately want older-than-watermark messages.
+    # Otherwise, filter to strictly newer than the last known id.
+    if args.backfill:
+        fresh = list(messages)
+    else:
+        fresh = [m for m in messages if m.id > last_known_id]
+
     if not fresh:
         print("› nothing new since last sync", file=sys.stderr)
         return 0
 
-    high_water = max(m.id for m in fresh)
+    fresh_max_id = max(m.id for m in fresh)
+    high_water = max(fresh_max_id, last_known_id)  # don't regress the watermark
     synced_at = datetime.now(tz=timezone.utc)
 
     # Partition by local day
@@ -399,22 +457,28 @@ def main() -> int:
         by_day.setdefault(m.local_date, []).append(m)
 
     print(f"› partitioned into {len(by_day)} day(s)", file=sys.stderr)
+    added_by_day: dict[str, int] = {}
     for date_str in sorted(by_day.keys()):
         added = upsert_day(date_str, by_day[date_str], high_water, synced_at)
+        added_by_day[date_str] = added
         print(f"  {date_str}: +{added} new message(s)", file=sys.stderr)
 
     write_state(high_water, synced_at)
     print(f"› sync complete - last_msg_id={high_water}", file=sys.stderr)
 
-    # machine-readable summary on stdout for the skill
+    # Only report dates that actually received new messages on stdout — the
+    # skill uses this list to decide which dates to auto-digest.
+    dates_with_new = sorted(d for d, n in added_by_day.items() if n > 0)
+
     print(
         json.dumps(
             {
                 "ok": True,
-                "datesTouched": sorted(by_day.keys()),
-                "messageCount": len(fresh),
+                "datesTouched": dates_with_new,
+                "messageCount": sum(added_by_day.values()),
                 "lastMessageId": high_water,
                 "syncedAt": synced_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "backfill": bool(args.backfill),
             }
         )
     )
