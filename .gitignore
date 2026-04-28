@@ -1,0 +1,30 @@
+# sync checkpoint state - machine-local, recreated on every run
+.sync-state.json
+
+# notify-new-events.sh runtime state - machine-local, recreated on every run
+.last-run.json
+.events.known-ids
+
+# raw chat archive - machine-local. EVENTS.md (the curated rollup) is the
+# only public artifact; raw community messages stay on the syncing host.
+logs/
+
+# claude code local permissions - machine-local
+.claude/settings.local.json
+
+# macOS
+.DS_Store
+
+# editor
+.idea
+.vscode/settings.json
+
+# python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# env
+.env
+.env.local
