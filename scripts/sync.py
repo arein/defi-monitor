@@ -183,10 +183,10 @@ def fetch_messages(since: str, limit: int) -> list[Message]:
             capture_output=True,
             text=True,
             check=True,
-            timeout=600,
+            timeout=1800,
         )
     except subprocess.TimeoutExpired:
-        print("✗ telegram CLI timed out after 10 minutes", file=sys.stderr)
+        print("✗ telegram CLI timed out after 30 minutes", file=sys.stderr)
         sys.exit(1)
     except subprocess.CalledProcessError as e:
         print(f"✗ telegram CLI exited {e.returncode}", file=sys.stderr)
