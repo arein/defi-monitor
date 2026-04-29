@@ -1,7 +1,14 @@
 #!/bin/bash
-# Diff current EVENTS.md event ids against the last-announced snapshot.
-# Send (via `openclaw message send`) any new ids, then update the snapshot.
-# First run (no snapshot file) just establishes a baseline silently.
+# Diff current EVENTS.md against the last-announced snapshot and send any
+# new incidents to Telegram via `openclaw message send`. First run (no
+# snapshot file) just establishes a baseline silently.
+#
+# Fingerprint format: "{first_date}|{protocol}|{title}", parsed from the
+# `## {emoji} {first_date}[ → {last_date}] - {protocol}: {title}` headings
+# rendered by scripts/events.py:render_events_md. The pre-2026-04-29 format
+# embedded `Event id:** \`<id>\`` markers in the body; events.py no longer
+# emits those, so the heading is now the only stable identifier in the
+# rendered file.
 #
 # Invoked by the openclaw cron defi-monitor job after /defi-monitor sync.
 
@@ -25,7 +32,9 @@ if [ ! -f "$EVENTS_FILE" ]; then
   exit 0
 fi
 
-CURRENT_IDS=$(grep -oE 'Event id:\*\* `[^`]+`' "$EVENTS_FILE" | sed 's/.*`\(.*\)`.*/\1/' | sort -u)
+CURRENT_IDS=$(grep -E '^## ' "$EVENTS_FILE" \
+  | sed -nE 's/^## [^[:alnum:]]*([0-9]{4}-[0-9]{2}-[0-9]{2})( → [0-9]{4}-[0-9]{2}-[0-9]{2})? - ([^:]+): (.+)$/\1|\3|\4/p' \
+  | sort -u)
 TOTAL_IDS=$(printf '%s\n' "$CURRENT_IDS" | grep -c .)
 
 if [ ! -f "$IDS_SNAPSHOT" ]; then
@@ -43,10 +52,14 @@ fi
 
 COUNT=$(printf '%s\n' "$NEW_IDS" | grep -c .)
 HEADLINES=""
-while IFS= read -r id; do
-  [ -z "$id" ] && continue
-  line=$(grep -B6 -F "\`$id\`" "$EVENTS_FILE" | grep -m1 '^## ' | sed 's/^## //')
-  HEADLINES+="• ${line:-$id}"$'\n'
+while IFS= read -r fp; do
+  [ -z "$fp" ] && continue
+  # fp = "{date}|{protocol}|{title}" - render as "{date} - {protocol}: {title}"
+  date_part="${fp%%|*}"
+  rest="${fp#*|}"
+  protocol_part="${rest%%|*}"
+  title_part="${rest#*|}"
+  HEADLINES+="• ${date_part} - ${protocol_part}: ${title_part}"$'\n'
 done <<<"$NEW_IDS"
 
 MSG="🛡️ DeFi Monitor: $COUNT new incident(s)"$'\n'"$HEADLINES"
