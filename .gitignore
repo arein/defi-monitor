@@ -1,6 +1,6 @@
 # sync checkpoint state - machine-local, recreated on every run
 .sync-state.json
-
+.stignore
 # notify-new-events.sh runtime state - machine-local, recreated on every run
 .last-run.json
 .events.known-ids
