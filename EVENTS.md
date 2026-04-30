@@ -4,11 +4,29 @@ Rolled up from every per-day digest by `scripts/events.py`
 (machine-local; the raw chat archive is not published here).
 **Don't hand-edit** - next run overwrites.
 
-_Last rebuild: 2026-04-29T02:52:02Z · spans 2026-03-05 → 2026-04-29 · 49 events at severity ≥ med._
+_Last rebuild: 2026-04-30T02:03:55Z · spans 2026-03-05 → 2026-04-30 · 52 events at severity ≥ med._
 
 Severity legend: 🔴 critical · 🟠 high · 🟡 med · 🟢 low
 
 ---
+
+## 🟠 2026-04-29 - yvWETH: yvWETH allowance drain confirmed, no Yearn protocol involvement
+
+- **Severity:** high
+- **Type:** exploit
+- **Driven by:** banteg, codephobic
+
+## 🟡 2026-04-29 - stETH strategy (phishing victim): Phishing attack misattributed as stETH vault strategy exploit
+
+- **Severity:** med
+- **Type:** phishing
+- **Driven by:** Schlag, Weso
+
+## 🟡 2026-04-29 - YieldCore: YieldCore-3rd-deal vault exploited, flagged as likely scam
+
+- **Severity:** med
+- **Type:** exploit
+- **Driven by:** Mikko, Tom, Arseniy
 
 ## 🟠 2026-04-27 - SingularityFinance: SingularityFinance dynBaseUSDCv3 oracle misconfiguration drained $413K
 
